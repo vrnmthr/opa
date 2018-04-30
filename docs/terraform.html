@@ -1850,7 +1850,20 @@
             
         </li>
     
-        <li class="chapter " data-level="2.5" data-path="kubernetes-admission-control.html">
+        <li class="chapter " data-level="2.5" data-path="kafka-authorization.html">
+            
+                <a href="kafka-authorization.html">
+            
+                    
+                    Kafka Authorization
+            
+                </a>
+            
+
+            
+        </li>
+    
+        <li class="chapter " data-level="2.6" data-path="kubernetes-admission-control.html">
             
                 <a href="kubernetes-admission-control.html">
             
@@ -1863,7 +1876,7 @@
             
         </li>
     
-        <li class="chapter active" data-level="2.6" data-path="terraform.html">
+        <li class="chapter active" data-level="2.7" data-path="terraform.html">
             
                 <a href="terraform.html">
             
@@ -2151,11 +2164,11 @@ EOF
 <h3 id="4-evaluate-the-opa-policy-on-the-terraform-plan">4. Evaluate the OPA policy on the Terraform plan</h3>
 <p>To evaluate the policy against that plan, you hand OPA the policy, the Terraform plan as input, and
 ask it to evaluate <code>data.terraform.analysis.authz</code>.</p>
-<pre><code class="lang-shell">opa run terraform.rego repl.input:tfplan.json -e &quot;data.terraform.analysis.authz&quot;
+<pre><code class="lang-shell">opa eval --data terraform.rego --input tfplan.json &quot;data.terraform.analysis.authz&quot;
 </code></pre>
 <p>If you&apos;re curious, you can ask for the score that the policy used to make the authorization decision.
 In our example, it is 11 (10 for the creation of the auto-scaling group and 1 for the creation of the server).</p>
-<pre><code class="lang-shell">opa run terraform.rego repl.input:tfplan.json -e &quot;data.terraform.analysis.score&quot;
+<pre><code class="lang-shell">opa eval --data terraform.rego --input tfplan.json &quot;data.terraform.analysis.score&quot;
 </code></pre>
 <p>If as suggested in the previous step, you want to modify your policy to make an authorization decision
 based on both the user and the Terraform plan, the input you would give to OPA would take the form
@@ -2218,8 +2231,8 @@ EOF
 tfjson tfplan_large.binary &gt; tfplan_large.json
 </code></pre>
 <p>Evaluate the policy to see that it fails the policy tests and check the score.</p>
-<pre><code class="lang-shell">opa run terraform.rego repl.input:tfplan_large.json -e &quot;data.terraform.analysis.authz&quot;
-opa run terraform.rego repl.input:tfplan_large.json -e &quot;data.terraform.analysis.score&quot;
+<pre><code class="lang-shell">opa eval --data terraform.rego --input tfplan_large.json &quot;data.terraform.analysis.authz&quot;
+opa eval --data terraform.rego --input tfplan_large.json &quot;data.terraform.analysis.score&quot;
 </code></pre>
 <h3 id="6-optional-run-opa-as-a-daemon-and-evaluate-policy">6. (Optional) Run OPA as a daemon and evaluate policy</h3>
 <p>In addition to running OPA from the command-line, you can run it as a daemon loaded with the Terraform policy and
@@ -2282,7 +2295,7 @@ curl localhost:8181/v0/data/terraform/analysis/authz -d @tfplan_large.json
     <script>
         var gitbook = gitbook || [];
         gitbook.push(function() {
-            gitbook.page.hasChanged({"page":{"title":"Terraform Testing","level":"2.6","depth":1,"previous":{"title":"Kubernetes Admission Control","level":"2.5","depth":1,"path":"kubernetes-admission-control.md","ref":"kubernetes-admission-control.md","articles":[]},"dir":"ltr"},"config":{"gitbook":"*","theme":"default","variables":{},"plugins":["header","addcssjs","collapsible-menu","custom-favicon","ga","-fontsettings"],"pluginsConfig":{"collapsible-menu":{},"search":{},"layout":{"headerPath":"layouts/header.html"},"addcssjs":{"css":[],"js":[]},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"header":{},"highlight":{},"favicon":"images/favicon.png","custom-favicon":{},"ga":{"configuration":"auto","token":"UA-84550302-1"},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"}},"file":{"path":"terraform.md","mtime":"2018-04-11T16:15:24.789Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2018-04-11T16:16:41.828Z"},"basePath":".","book":{"language":""}});
+            gitbook.page.hasChanged({"page":{"title":"Terraform Testing","level":"2.7","depth":1,"previous":{"title":"Kubernetes Admission Control","level":"2.6","depth":1,"path":"kubernetes-admission-control.md","ref":"kubernetes-admission-control.md","articles":[]},"dir":"ltr"},"config":{"gitbook":"*","theme":"default","variables":{},"plugins":["header","addcssjs","collapsible-menu","custom-favicon","ga","-fontsettings"],"pluginsConfig":{"collapsible-menu":{},"search":{},"layout":{"headerPath":"layouts/header.html"},"addcssjs":{"css":[],"js":[]},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"header":{},"highlight":{},"favicon":"images/favicon.png","custom-favicon":{},"ga":{"configuration":"auto","token":"UA-84550302-1"},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"}},"file":{"path":"terraform.md","mtime":"2018-04-30T20:07:14.331Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2018-04-30T20:08:39.388Z"},"basePath":".","book":{"language":""}});
         });
     </script>
 </div>

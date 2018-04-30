@@ -4,7 +4,7 @@
     <head>
         <meta charset="UTF-8">
         <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
-        <title>Deployments &#xB7; GitBook</title>
+        <title>Kafka Authorization &#xB7; GitBook</title>
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
         <meta name="description" content="">
         <meta name="generator" content="GitBook 3.2.3">
@@ -58,10 +58,10 @@
     <link rel="shortcut icon" href="gitbook/images/favicon.ico" type="image/x-icon">
 
     
-    <link rel="next" href="deployments.html">
+    <link rel="next" href="kubernetes-admission-control.html">
     
     
-    <link rel="prev" href="rest-api.html">
+    <link rel="prev" href="ssh-and-sudo-authorization.html">
     
 
     </head>
@@ -1388,7 +1388,7 @@
             
         </li>
     
-        <li class="chapter active" data-level="1.6" data-path="deployments.html">
+        <li class="chapter " data-level="1.6" data-path="deployments.html">
             
                 <a href="deployments.html">
             
@@ -1852,7 +1852,7 @@
             
         </li>
     
-        <li class="chapter " data-level="2.5" data-path="kafka-authorization.html">
+        <li class="chapter active" data-level="2.5" data-path="kafka-authorization.html">
             
                 <a href="kafka-authorization.html">
             
@@ -1921,7 +1921,7 @@
     <!-- Title -->
     <h1>
         <i class="fa fa-circle-o-notch fa-spin"></i>
-        <a href=".">Deployments</a>
+        <a href=".">Kafka Authorization</a>
     </h1>
 </div>
 
@@ -1936,216 +1936,270 @@
     
                                 <section class="normal markdown-section">
                                 
-                                <h1 id="deployments">Deployments</h1>
-<p>This document helps you get OPA up and running in different deployment
-environments. You should read this document if you are planning to deploy OPA.</p>
-<h2 id="docker">Docker</h2>
-<p>Docker makes OPA easy to deploy in different types of environments.</p>
-<p>This section explains how to use the official OPA Docker images. If this is your
-first time deploying OPA and you plan to use one of the Docker images, we
-recommend you review this section to familiarize yourself with the basics.</p>
-<p>OPA releases are available as images on Docker Hub.</p>
+                                <h1 id="kafka-authorization">Kafka Authorization</h1>
+<p><a href="https://kafka.apache.org/" target="_blank">Apache Kafka</a> is a high-performance distributed
+streaming platform deployed by thousands of companies. In many deployments,
+administrators require fine-grained access control over Kafka topics to
+enforce important requirements around confidentiality and integrity.</p>
+<h2 id="goals">Goals</h2>
+<p>This tutorial shows how to enforce fine-grained access control over Kafka
+topics. In this tutorial you will use OPA to define and enforce an
+authorization policy stating:</p>
 <ul>
-<li><a href="https://hub.docker.com/r/openpolicyagent/opa/" target="_blank">openpolicyagent/opa:0.8.1</a></li>
+<li>Consumers of topics containing Personally Identifiable Information (PII) must be whitelisted.</li>
+<li>Producers to topics with <em>high fanout</em> must be whitelisted.</li>
 </ul>
-<h3 id="running-with-docker">Running with Docker</h3>
-<p>If you start OPA outside of Docker without any arguments, it prints a list of
-available commands. By default, the official OPA Docker image executes the <code>run</code>
-command which starts an instance of OPA as an interactive shell. This is nice
-for development, however, for deployments, we want to run OPA as a server.</p>
-<p>The <code>run</code> command accepts a <code>--server</code> (or <code>-s</code>) flag that starts OPA as a
-server. See <code>--help</code> for more information on other arguments. The most important
-command line arguments for OPA&apos;s server mode are:</p>
+<p>In addition, this tutorial shows how to break up a policy with small helper
+rules to reuse logic and improve overall readability.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<p>This tutorial requires <a href="https://docs.docker.com/compose/install/" target="_blank">Docker Compose</a> to run Kafka, ZooKeeper, and OPA.</p>
+<h2 id="steps">Steps</h2>
+<h3 id="1-bootstrap-the-tutorial-environment-using-docker-compose">1. Bootstrap the tutorial environment using Docker Compose.</h3>
+<p>First, create an OPA policy that allows all requests. You will update this policy later in the tutorial.</p>
+<pre><code class="lang-bash">mkdir -p policies
+</code></pre>
+<p><strong>policies/tutorial.rego</strong>:</p>
+<pre><code class="lang-ruby">package kafka.authz
+
+allow = <span class="hljs-keyword">true</span>
+</code></pre>
+<p>Next, create a <code>docker-compose.yaml</code> file that runs OPA, ZooKeeper, and Kafka.</p>
+<p><strong>docker-compose.yaml</strong>:</p>
+<pre><code class="lang-yaml"><span class="hljs-attr">version:</span> <span class="hljs-string">&quot;2&quot;</span>
+<span class="hljs-attr">services:</span>
+<span class="hljs-attr">  opa:</span>
+<span class="hljs-attr">    hostname:</span> opa
+<span class="hljs-attr">    image:</span> openpolicyagent/opa:<span class="hljs-number">0.8</span><span class="hljs-number">.1</span>
+<span class="hljs-attr">    ports:</span>
+<span class="hljs-bullet">      -</span> <span class="hljs-number">8181</span>:<span class="hljs-number">8181</span>
+<span class="hljs-attr">    command:</span> <span class="hljs-string">&quot;run --server --watch /policies&quot;</span>
+<span class="hljs-attr">    volumes:</span>
+<span class="hljs-bullet">      -</span> ./policies:/policies
+<span class="hljs-attr">  zookeeper:</span>
+<span class="hljs-attr">    image:</span> confluentinc/cp-zookeeper:<span class="hljs-number">4.0</span><span class="hljs-number">.0</span><span class="hljs-bullet">-3</span>
+<span class="hljs-attr">    environment:</span>
+<span class="hljs-attr">      ZOOKEEPER_CLIENT_PORT:</span> <span class="hljs-number">2181</span>
+<span class="hljs-attr">      zk_id:</span> <span class="hljs-string">&quot;1&quot;</span>
+<span class="hljs-attr">  kafka:</span>
+<span class="hljs-attr">    hostname:</span> kafka
+<span class="hljs-attr">    image:</span> openpolicyagent/demo-kafka:<span class="hljs-number">1.0</span>
+<span class="hljs-attr">    links:</span>
+<span class="hljs-bullet">      -</span> zookeeper
+<span class="hljs-bullet">      -</span> opa
+<span class="hljs-attr">    ports:</span>
+<span class="hljs-bullet">      -</span> <span class="hljs-string">&quot;9092:9092&quot;</span>
+<span class="hljs-attr">    environment:</span>
+<span class="hljs-attr">      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:</span> <span class="hljs-string">&quot;1&quot;</span>
+<span class="hljs-attr">      KAFKA_ZOOKEEPER_CONNECT:</span> <span class="hljs-string">&quot;zookeeper:2181&quot;</span>
+<span class="hljs-attr">      KAFKA_ADVERTISED_LISTENERS:</span> <span class="hljs-string">&quot;SSL://:9093&quot;</span>
+<span class="hljs-attr">      KAFKA_SECURITY_INTER_BROKER_PROTOCOL:</span> SSL
+<span class="hljs-attr">      KAFKA_SSL_CLIENT_AUTH:</span> required
+<span class="hljs-attr">      KAFKA_SSL_KEYSTORE_FILENAME:</span> kafka.broker.keystore.jks
+<span class="hljs-attr">      KAFKA_SSL_KEYSTORE_CREDENTIALS:</span> broker_keystore_creds
+<span class="hljs-attr">      KAFKA_SSL_KEY_CREDENTIALS:</span> broker_sslkey_creds
+<span class="hljs-attr">      KAFKA_SSL_TRUSTSTORE_FILENAME:</span> kafka.broker.truststore.jks
+<span class="hljs-attr">      KAFKA_SSL_TRUSTSTORE_CREDENTIALS:</span> broker_truststore_creds
+<span class="hljs-attr">      KAFKA_AUTHORIZER_CLASS_NAME:</span> com.lbg.kafka.opa.OpaAuthorizer
+<span class="hljs-attr">      KAFKA_OPA_AUTHORIZER_URL:</span> <span class="hljs-string">&quot;http://opa:8181/v1/data/kafka/authz/allow&quot;</span>
+<span class="hljs-attr">      KAFKA_OPA_AUTHORIZER_ALLOW_ON_ERROR:</span> <span class="hljs-string">&quot;false&quot;</span>
+<span class="hljs-attr">      KAFKA_OPA_AUTHORIZER_CACHE_INITIAL_CAPACITY:</span> <span class="hljs-number">100</span>
+<span class="hljs-attr">      KAFKA_OPA_AUTHORIZER_CACHE_MAXIMUM_SIZE:</span> <span class="hljs-number">100</span>
+<span class="hljs-attr">      KAFKA_OPA_AUTHORIZER_CACHE_EXPIRE_AFTER_MS:</span> <span class="hljs-number">600000</span>
+</code></pre>
+<p>For more information on how to configure the OPA plugin for Kafka, see the <a href="https://github.com/open-policy-agent/contrib" target="_blank">github.com/open-policy-agent/contrib</a>
+repository.</p>
+<p>Once you have created the file, launch the containers for this tutorial.</p>
+<pre><code class="lang-bash">docker-compose --project-name opa-kafka-tutorial up
+</code></pre>
+<p>The docker-compose.yaml file starts three containers. The Kafka container is started from a Docker image (<code>openpolicyagent/demo-kafka</code>) based on the <a href="https://hub.docker.com/r/confluentinc/cp-kafka/" target="_blank">confluentinc/cp-kafka image on Docker Hub</a>. The <code>openpolicyagent/demo-kafka</code> image contains a few extra files that simplify the bootstrap process in this tutorial:</p>
 <ul>
-<li><code>--addr</code> to set the listening address (default: <code>0.0.0.0:8181</code>).</li>
-<li><code>--log-level</code> (or <code>-l</code>) to set the log level (default: <code>&quot;info&quot;</code>).</li>
-<li><code>--log-format</code> to set the log format (default: <code>&quot;text&quot;</code>).</li>
+<li><a href="https://github.com/open-policy-agent/contrib/tree/master/kafka_authorizer" target="_blank">kafka-authorizer-opa JAR file</a> that implements the <a href="https://kafka.apache.org/documentation/#security_authz" target="_blank">Kafka Authorizer</a> interface using OPA.</li>
+<li>Pre-generated TLS certificates that Kafka will use to authenticate clients. These certificates are purely for convenience in the context of this tutorial. For production deployments you must design, implement, and manage <em>client authentication</em> yourself.</li>
 </ul>
-<p>By default, OPA listens for normal HTTP connections on <code>0.0.0.0:8181</code>. To make
-OPA listen for HTTPS connections, see <a href="security.html">Security</a>.</p>
-<p>We can run OPA as a server using Docker:</p>
-<pre><code class="lang-bash">docker run -p 8181:8181 openpolicyagent/opa \
-    run --server --log-level debug
-</code></pre>
-<p>Test that OPA is available:</p>
-<pre><code>curl -i localhost:8181/
-</code></pre><h4 id="logging">Logging</h4>
-<p>OPA logs to stderr and the level can be set with <code>--log-level/-l</code>. The default log level is <code>info</code> which causes OPA to log request/response headers.</p>
-<pre><code>time=&quot;20.7.13-12T03:03:23Z&quot; level=info msg=&quot;First line of log stream.&quot; addr=&quot;:8181&quot;
-time=&quot;20.7.13-12T03:03:30Z&quot; level=debug msg=&quot;Received request.&quot; client_addr=&quot;172.17.0.1:60952&quot; req_body= req_id=1 req_method=GET req_params=map[] req_path=&quot;/v1/data&quot;
-time=&quot;20.7.13-12T03:03:30Z&quot; level=debug msg=&quot;Sent response.&quot; client_addr=&quot;172.17.0.1:60952&quot; req_id=1 req_method=GET req_path=&quot;/v1/data&quot; resp_bytes=13 resp_duration=0.402793 resp_status=200
-</code></pre><p>If the log level is set to <code>debug</code> the request and response message bodies will be logged. This is useful for development however it can be expensive in production.</p>
-<pre><code>time=&quot;20.7.15-16T00:09:24Z&quot; level=info msg=&quot;Received request.&quot; client_addr=&quot;172.17.0.1:42164&quot; req_body=&quot;{&quot;input&quot;: &quot;hello&quot;}&quot; req_id=1 req_method=POST req_params=map[] req_path=&quot;/v1/data&quot;
-time=&quot;20.7.15-16T00:09:24Z&quot; level=info msg=&quot;Sent response.&quot; client_addr=&quot;172.17.0.1:42164&quot; req_id=1 req_method=POST req_path=&quot;/v1/data&quot; resp_body=&quot;{&quot;result&quot;:{&quot;example&quot;:{&quot;message&quot;:&quot;world&quot;}}}&quot; resp_bytes=42 resp_duration=0.618689 resp_status=200
-</code></pre><p>The default log format is text-based and intended for development. For
-production, enable JSON formatting with <code>--log-format json</code>:</p>
-<pre><code>{&quot;client_addr&quot;:&quot;[::1]:64427&quot;,&quot;level&quot;:&quot;debug&quot;,&quot;msg&quot;:&quot;Received request.&quot;,&quot;req_body&quot;:&quot;&quot;,&quot;req_id&quot;:1,&quot;req_method&quot;:&quot;GET&quot;,&quot;req_params&quot;:{},&quot;req_path&quot;:&quot;/v1/data&quot;,&quot;time&quot;:&quot;20.7.13-11T18:22:18-08:00&quot;}
-{&quot;client_addr&quot;:&quot;[::1]:64427&quot;,&quot;level&quot;:&quot;debug&quot;,&quot;msg&quot;:&quot;Sent response.&quot;,&quot;req_id&quot;:1,&quot;req_method&quot;:&quot;GET&quot;,&quot;req_path&quot;:&quot;/v1/data&quot;,&quot;resp_bytes&quot;:13,&quot;resp_duration&quot;:0.392554,&quot;resp_status&quot;:200,&quot;time&quot;:&quot;20.7.13-11T18:22:18-08:00&quot;}
-</code></pre><h4 id="volume-mounts">Volume Mounts</h4>
-<p>By default, OPA does not include any data or policies.</p>
-<p>The simplest way to load data and policies into OPA is to provide them via the
-file system as command line arguments. When running inside Docker, you can
-provide files via volume mounts.</p>
-<pre><code class="lang-bash">docker run -v <span class="hljs-variable">$PWD</span>/example:/example openpolicyagent/opa \
-    run <span class="hljs-_">-e</span> <span class="hljs-string">&apos;data.example.greeting&apos;</span> \
-    /example
-</code></pre>
-<p><strong>$PWD/example/<a href="https://github.com/open-policy-agent/opa/docs/book/tutorials/deployments-docker/example/data.json" target="_blank">data.json</a></strong>:</p>
-<pre><code class="lang-yaml">{
-<span class="hljs-attr">    &quot;hostOS&quot;:</span> <span class="hljs-string">&quot;$(uname)&quot;</span>
-}
-</code></pre>
+<p>Now that the tutorial environment is running, we can define an authorization policy using OPA and test it.</p>
+<h3 id="2-define-a-policy-to-restrict-consumer-access-to-topics-containing-personally-identifiable-information-pii">2. Define a policy to restrict consumer access to topics containing Personally Identifiable Information (PII).</h3>
+<p>Update the <code>policies/tutorial.rego</code> with the following content.</p>
+<pre><code class="lang-ruby"><span class="hljs-comment">#-----------------------------------------------------------------------------</span>
+<span class="hljs-comment"># High level policy for controlling access to Kafka.</span>
+<span class="hljs-comment">#</span>
+<span class="hljs-comment"># * Deny operations by default.</span>
+<span class="hljs-comment"># * Allow operations if no explicit denial.</span>
+<span class="hljs-comment">#</span>
+<span class="hljs-comment"># The kafka-authorizer-opa plugin will query OPA for decisions at</span>
+<span class="hljs-comment"># /kafka/authz/allow. If the policy decision is _true_ the request is allowed.</span>
+<span class="hljs-comment"># If the policy decision is _false_ the request is denied.</span>
+<span class="hljs-comment">#-----------------------------------------------------------------------------</span>
+package kafka.authz
 
-<p><strong>$PWD/example/<a href="https://github.com/open-policy-agent/opa/docs/book/tutorials/deployments-docker/example/policy.rego" target="_blank">policy.rego</a></strong>:</p>
-<pre><code class="lang-ruby">package example
+default allow = <span class="hljs-keyword">false</span>
 
-greeting = msg {
-    concat(<span class="hljs-string">&quot;&quot;</span>, [<span class="hljs-string">&quot;Hello &quot;</span>, data.example.hostOS, <span class="hljs-string">&quot;!&quot;</span>], msg)
+allow {
+    <span class="hljs-keyword">not</span> deny
 }
 
-</code></pre>
-
-<h4 id="more-information">More Information</h4>
-<p>For more information on OPA&apos;s command line, see <code>--help</code>:</p>
-<pre><code>docker run openpolicyagent/opa run --help
-</code></pre><h3 id="tagging">Tagging</h3>
-<p>The Docker Hub repository contains tags for every release of OPA. For more
-information on each release see the <a href="https://github.com/open-policy-agent/opa/releases" target="_blank">GitHub
-Releases</a> page.</p>
-<p>The &quot;latest&quot; tag refers to the most recent release. The latest tag is convenient
-if you want to quickly try out OPA however for production deployments, we
-recommend using an explicit version tag.</p>
-<p>Development builds are also available on Docker Hub. For each version the
-<code>{version}-dev</code> tag refers the most recent development build for that version.</p>
-<p>The version information is contained in the OPA executable itself. You can check
-the version with the following command:</p>
-<pre><code class="lang-bash">docker run openpolicyagent/opa version
-</code></pre>
-<h2 id="kubernetes">Kubernetes</h2>
-<h3 id="kicking-the-tires">Kicking the Tires</h3>
-<p>This section shows how to quickly deploy OPA on top of Kubernetes to try it out.</p>
-<blockquote>
-<p>These steps assume Kubernetes is deployed with
-<a href="https://github.com/kubernetes/minikube" target="_blank">minikube</a>. If you are using a different
-Kubernetes provider, the steps should be similar. You may need to use a
-different Service configuration at the end.</p>
-</blockquote>
-<p>First, create a ConfigMap containing a test policy. The policy will inspect
-&quot;pod&quot; objects provided as input. If the pod is missing a &quot;customer&quot; label or the
-pod includes containers that refer to images outside the acmecorp registry,
-&quot;allow&quot; will be false.</p>
-<p>In this case, the policy file does not contain sensitive information so it&apos;s
-fine to store as a ConfigMap. If the file contained sensitive information, then
-we recommend you store it as a Secret.</p>
-<p><strong><a href="https://github.com/open-policy-agent/opa/docs/book/tutorials/deployments-kubernetes/example.rego" target="_blank">example.rego</a></strong></p>
-<pre><code class="lang-ruby">package example
-
-import input.pod
-
-default allow = <span class="hljs-keyword">true</span>
-
-allow = <span class="hljs-keyword">false</span> {
-    <span class="hljs-keyword">not</span> pod.metadata.labels.customer
+deny {
+    is_read_operation
+    topic_contains_pii
+    <span class="hljs-keyword">not</span> consumer_is_whitelisted_for_pii
 }
 
-allow = <span class="hljs-keyword">false</span> {
-    container = pod.spec.containers[<span class="hljs-number">_</span>]
-    <span class="hljs-keyword">not</span> re_match(<span class="hljs-string">&quot;^registry.acmecorp.com/.+$&quot;</span>, container.image)
-}</code></pre>
+<span class="hljs-comment">#-----------------------------------------------------------------------------</span>
+<span class="hljs-comment"># Data structures for controlling access to topics. In real-world deployments,</span>
+<span class="hljs-comment"># these data structures could be loaded into OPA as raw JSON data. The JSON</span>
+<span class="hljs-comment"># data could be pulled from external sources like AD, Git, etc.</span>
+<span class="hljs-comment">#-----------------------------------------------------------------------------</span>
 
-<pre><code class="lang-bash">kubectl create configmap example-policy \
-    --from-file example.rego
-</code></pre>
-<p>Next, create a ReplicationController to deploy OPA. The ConfigMap containing the
-policy is volume mounted into the container. This allows OPA to load the policy
-from the file system.</p>
-<p><strong><a href="https://github.com/open-policy-agent/opa/docs/book/tutorials/deployments-kubernetes/rc_opa.yaml" target="_blank">rc_opa.yaml</a></strong></p>
-<pre><code class="lang-yaml"><span class="hljs-attr">kind:</span> ReplicationController
-<span class="hljs-attr">apiVersion:</span> v1
-<span class="hljs-attr">metadata:</span>
-<span class="hljs-attr">  name:</span> opa
-<span class="hljs-attr">spec:</span>
-<span class="hljs-attr">  replicas:</span> <span class="hljs-number">1</span>
-<span class="hljs-attr">  selector:</span>
-<span class="hljs-attr">    app:</span> opa
-<span class="hljs-attr">  template:</span>
-<span class="hljs-attr">    metadata:</span>
-<span class="hljs-attr">      labels:</span>
-<span class="hljs-attr">        app:</span> opa
-<span class="hljs-attr">    spec:</span>
-<span class="hljs-attr">      volumes:</span>
-<span class="hljs-attr">      - name:</span> example-policy
-<span class="hljs-attr">        configMap:</span>
-<span class="hljs-attr">          name:</span> example-policy
-<span class="hljs-attr">      containers:</span>
-<span class="hljs-attr">      - name:</span> opa
-<span class="hljs-attr">        image:</span> openpolicyagent/opa
-<span class="hljs-attr">        ports:</span>
-<span class="hljs-attr">        - name:</span> http
-<span class="hljs-attr">          containerPort:</span> <span class="hljs-number">8181</span>
-<span class="hljs-attr">        args:</span>
-<span class="hljs-bullet">        -</span> <span class="hljs-string">&quot;run&quot;</span>
-<span class="hljs-bullet">        -</span> <span class="hljs-string">&quot;--server&quot;</span>
-<span class="hljs-bullet">        -</span> <span class="hljs-string">&quot;/policies/example.rego&quot;</span>
-<span class="hljs-attr">        volumeMounts:</span>
-<span class="hljs-attr">        - readOnly:</span> <span class="hljs-literal">true</span>
-<span class="hljs-attr">          mountPath:</span> /policies
-<span class="hljs-attr">          name:</span> example-policy</code></pre>
+consumer_whitelist = {<span class="hljs-string">&quot;pii&quot;</span><span class="hljs-symbol">:</span> {<span class="hljs-string">&quot;pii_consumer&quot;</span>}}
 
-<pre><code class="lang-bash">kubectl create <span class="hljs-_">-f</span> rc_opa.yaml
-</code></pre>
-<p>At this point OPA is up and running. Create a Service to expose the OPA API so
-that you can query it:</p>
-<p><strong><a href="https://github.com/open-policy-agent/opa/docs/book/tutorials/deployments-kubernetes/svc_opa.yaml" target="_blank">svc_opa.yaml</a></strong></p>
-<pre><code class="lang-yaml"><span class="hljs-attr">kind:</span> Service
-<span class="hljs-attr">apiVersion:</span> v1
-<span class="hljs-attr">metadata:</span>
-<span class="hljs-attr">  name:</span> opa
-<span class="hljs-attr">  labels:</span>
-<span class="hljs-attr">    app:</span> opa
-<span class="hljs-attr">spec:</span>
-<span class="hljs-attr">  type:</span> NodePort
-<span class="hljs-attr">  selector:</span>
-<span class="hljs-attr">    app:</span> opa
-<span class="hljs-attr">  ports:</span>
-<span class="hljs-attr">    - name:</span> http
-<span class="hljs-attr">      protocol:</span> TCP
-<span class="hljs-attr">      port:</span> <span class="hljs-number">8181</span>
-<span class="hljs-attr">      targetPort:</span> <span class="hljs-number">8181</span></code></pre>
+topic_metadata = {<span class="hljs-string">&quot;credit-scores&quot;</span><span class="hljs-symbol">:</span> {<span class="hljs-string">&quot;tags&quot;</span><span class="hljs-symbol">:</span> [<span class="hljs-string">&quot;pii&quot;</span>]}}
 
+<span class="hljs-comment">#-----------------------------------</span>
+<span class="hljs-comment"># Helpers for checking topic access.</span>
+<span class="hljs-comment">#-----------------------------------</span>
 
-<pre><code class="lang-bash">kubectl create <span class="hljs-_">-f</span> svc_opa.yaml
-</code></pre>
-<p>Get the URL of OPA using <code>minikube</code>:</p>
-<pre><code class="lang-bash">OPA_URL=$(minikube service opa --url)
-</code></pre>
-<p>Exercise the OPA API. Note that the container below references an image outside
-our hypothetical repository:</p>
-<p><strong><a href="https://github.com/open-policy-agent/opa/docs/book/tutorials/deployments-kubernetes/example_pod.json" target="_blank">example_pod.json</a></strong></p>
-<pre><code class="lang-json">{
-    <span class="hljs-string">&quot;input&quot;</span>: {
-        <span class="hljs-string">&quot;kind&quot;</span>: <span class="hljs-string">&quot;Pod&quot;</span>,
-        <span class="hljs-string">&quot;apiVersion&quot;</span>: <span class="hljs-string">&quot;v1&quot;</span>,
-        <span class="hljs-string">&quot;metadata&quot;</span>: {
-            <span class="hljs-string">&quot;name&quot;</span>: <span class="hljs-string">&quot;opa&quot;</span>,
-            <span class="hljs-string">&quot;labels&quot;</span>: {
-                <span class="hljs-string">&quot;customer&quot;</span>: <span class="hljs-string">&quot;example.org&quot;</span>
-            }
-        },
-        <span class="hljs-string">&quot;spec&quot;</span>: {
-            <span class="hljs-string">&quot;containers&quot;</span>: [
-                {
-                    <span class="hljs-string">&quot;name&quot;</span>: <span class="hljs-string">&quot;opa&quot;</span>,
-                    <span class="hljs-string">&quot;image&quot;</span>: <span class="hljs-string">&quot;openpolicyagent/opa&quot;</span>
-                }
-            ]
-        }
-    }
+topic_contains_pii {
+    topic_metadata[topic_name].tags[<span class="hljs-number">_</span>] == <span class="hljs-string">&quot;pii&quot;</span>
+}
+
+consumer_is_whitelisted_for_pii {
+    consumer_whitelist.pii[<span class="hljs-number">_</span>] == principal.name
+}
+
+<span class="hljs-comment">#-----------------------------------------------------------------------------</span>
+<span class="hljs-comment"># Helpers for processing Kafka operation input. This logic could be split out</span>
+<span class="hljs-comment"># into a separate file and shared. For conciseness, we have kept it all in one</span>
+<span class="hljs-comment"># place.</span>
+<span class="hljs-comment">#-----------------------------------------------------------------------------</span>
+
+is_write_operation {
+    input.operation.name == <span class="hljs-string">&quot;Write&quot;</span>
+}
+
+is_read_operation {
+    input.operation.name == <span class="hljs-string">&quot;Read&quot;</span>
+}
+
+is_topic_resource {
+    input.resource.resourceType.name == <span class="hljs-string">&quot;Topic&quot;</span>
+}
+
+topic_name = input.resource.name {
+    is_topic_resource
+}
+
+principal = {<span class="hljs-string">&quot;fqn&quot;</span><span class="hljs-symbol">:</span> parsed.CN, <span class="hljs-string">&quot;name&quot;</span><span class="hljs-symbol">:</span> cn_parts[<span class="hljs-number">0</span>]} {
+    parsed <span class="hljs-symbol">:</span>= parse_user(urlquery.decode(input.session.sanitizedUser))
+    cn_parts <span class="hljs-symbol">:</span>= split(parsed.CN, <span class="hljs-string">&quot;.&quot;</span>)
+}
+
+parse_user(user) = {<span class="hljs-symbol">key:</span> value |
+    parts <span class="hljs-symbol">:</span>= split(user, <span class="hljs-string">&quot;,&quot;</span>)
+    [key, value] <span class="hljs-symbol">:</span>= split(parts[<span class="hljs-number">_</span>], <span class="hljs-string">&quot;=&quot;</span>)
 }
 </code></pre>
-
-<pre><code class="lang-bash">curl <span class="hljs-variable">$OPA_URL</span>/v1/data <span class="hljs-_">-d</span> @example_pod.json
+<p>The <code>./policies</code> directory is mounted into the Docker container running OPA.
+When the files under this directory change, OPA is notified and the policies
+are automatically reloaded.</p>
+<p>At this point, you can exercise the policy.</p>
+<h3 id="3-exercise-the-policy-that-restricts-consumer-access-to-topics-containing-pii">3. Exercise the policy that restricts consumer access to topics containing PII.</h3>
+<p>This step shows how you can grant fine-grained access to services using
+Kafka. In this scenario, some services are allowed to read PII data while
+others are not.</p>
+<p>First, run <code>kafka-console-producer</code> to generate some data on the
+<code>credit-scores</code> topic.</p>
+<pre><code class="lang-bash">docker run --rm --network opakafkatutorial_default \
+    openpolicyagent/demo-kafka:1.0 \
+    bash -c <span class="hljs-string">&apos;for i in {1..10}; do echo &quot;{\&quot;user\&quot;: \&quot;bob\&quot;, \&quot;score\&quot;: $i}&quot;; done | kafka-console-producer --topic credit-scores --broker-list kafka:9093 -producer.config /etc/kafka/secrets/anon_producer.ssl.config&apos;</span>
 </code></pre>
+<p>This command will send 10 messages to the <code>credit-scores</code> topic. Bob&apos;s credit
+score seems to be improving.</p>
+<p>Next, run <code>kafka-console-consumer</code> and try to read data off the topic. Use
+the <code>pii_consumer</code> credentials to simulate a service that is allowed to read
+PII data.</p>
+<pre><code class="lang-bash">docker run --rm --network opakafkatutorial_default \
+    openpolicyagent/demo-kafka:1.0 \
+    kafka-console-consumer --bootstrap-server kafka:9093 --topic credit-scores --from-beginning --consumer.config /etc/kafka/secrets/pii_consumer.ssl.config
+</code></pre>
+<p>This command will output the 10 messages sent to the topic in the first part
+of this step. Once the 10 messages have been printed, exit out of the script
+(^C).</p>
+<p>Finally, run <code>kafka-console-consumer</code> again but this time try to use the
+<code>anon_consumer</code> credentials. The <code>anon_consumer</code> credentials simulate a
+service that has <strong>not</strong> been explicitly granted access to PII data.</p>
+<pre><code class="lang-bash">docker run --rm --network opakafkatutorial_default \
+    openpolicyagent/demo-kafka:1.0 \
+    kafka-console-consumer --bootstrap-server kafka:9093 --topic credit-scores --from-beginning --consumer.config /etc/kafka/secrets/anon_consumer.ssl.config
+</code></pre>
+<p>Because the <code>anon_consumer</code> is not allowed to read PII data, the request will
+be denied and the consumer will output an error message.</p>
+<pre><code>Not authorized to read from topic credit-scores.
+...
+Processed a total of 0 messages
+</code></pre><h3 id="4-extend-the-policy-to-prevent-services-from-accidentally-writing-to-topics-with-large-fanout">4. Extend the policy to prevent services from accidentally writing to topics with large fanout.</h3>
+<p>First, add the following content to the policy file (<code>./policies/tutorial.rego</code>):</p>
+<pre><code class="lang-ruby">deny {
+  is_write_operation
+  topic_has_large_fanout
+  <span class="hljs-keyword">not</span> producer_is_whitelisted_for_large_fanout
+}
+
+producer_whitelist = {
+  <span class="hljs-string">&quot;large-fanout&quot;</span><span class="hljs-symbol">:</span> {
+    <span class="hljs-string">&quot;fanout_producer&quot;</span>,
+  }
+}
+
+topic_has_large_fanout {
+  topic_metadata[topic_name].tags[<span class="hljs-number">_</span>] == <span class="hljs-string">&quot;large-fanout&quot;</span>
+}
+
+producer_is_whitelisted_for_large_fanout {
+  producer_whitelist[<span class="hljs-string">&quot;large-fanout&quot;</span>][<span class="hljs-number">_</span>] == principal.name
+}
+</code></pre>
+<p>Next, update the <code>topic_metadata</code> data structure in the same file to indicate
+that the <code>click-stream</code> topic has a high fanout.</p>
+<pre><code class="lang-ruby">topic_metadata = {
+  <span class="hljs-string">&quot;click-stream&quot;</span><span class="hljs-symbol">:</span> {
+    <span class="hljs-string">&quot;tags&quot;</span><span class="hljs-symbol">:</span> [<span class="hljs-string">&quot;large-fanout&quot;</span>],
+  },
+  <span class="hljs-string">&quot;credit-scores&quot;</span><span class="hljs-symbol">:</span> {
+    <span class="hljs-string">&quot;tags&quot;</span><span class="hljs-symbol">:</span> [<span class="hljs-string">&quot;pii&quot;</span>],
+  }
+}
+</code></pre>
+<h3 id="5-exercise-the-policy-that-restricts-producer-access-to-topics-with-high-fanout">5. Exercise the policy that restricts producer access to topics with high fanout.</h3>
+<p>First, run <code>kafka-console-producer</code> and simulate a service with access to the
+<code>click-stream</code> topic.</p>
+<pre><code class="lang-bash">docker run --rm --network opakafkatutorial_default \
+    openpolicyagent/demo-kafka:1.0 \
+    bash -c <span class="hljs-string">&apos;for i in {1..10}; do echo &quot;{\&quot;user\&quot;: \&quot;alice\&quot;, \&quot;button\&quot;: $i}&quot;; done | kafka-console-producer --topic click-stream --broker-list kafka:9093 -producer.config /etc/kafka/secrets/fanout_producer.ssl.config&apos;</span>
+</code></pre>
+<p>Next, run the <code>kafka-console-consumer</code> to confirm that the messages were published.</p>
+<pre><code class="lang-bash">docker run --rm --network opakafkatutorial_default \
+    openpolicyagent/demo-kafka:1.0 \
+    kafka-console-consumer --bootstrap-server kafka:9093 --topic click-stream --from-beginning --consumer.config /etc/kafka/secrets/anon_consumer.ssl.config
+</code></pre>
+<p>Once you see the 10 messages produced by the first part of this step, exit the console consumer (^C).</p>
+<p>Lastly, run <code>kafka-console-producer</code> to simulate a service that should <strong>not</strong>
+have access to <em>high fanout</em> topics.</p>
+<pre><code class="lang-bash">docker run --rm --network opakafkatutorial_default \
+    openpolicyagent/demo-kafka:1.0 \
+    bash -c <span class="hljs-string">&apos;echo &quot;{\&quot;user\&quot;: \&quot;alice\&quot;, \&quot;button\&quot;: \&quot;bogus\&quot;}&quot; | kafka-console-producer --topic click-stream --broker-list kafka:9093 -producer.config /etc/kafka/secrets/anon_producer.ssl.config&apos;</span>
+</code></pre>
+<p>Because <code>anon_producer</code> is not authorized to write to high fanout topics, the
+request will be denied and the producer will output an error message.</p>
+<pre><code>Not authorized to access topics: [click-stream]
+</code></pre><h2 id="wrap-up">Wrap Up</h2>
+<p>Congratulations for finishing the tutorial!</p>
+<p>At this point you have learned how to enforce fine-grained access control
+over Kafka topics. In addition, you have seen how to break down policies into
+smaller rules that can be reused and improve the overall readability over the
+policy.</p>
+<p>If you want to use the Kafka Authorizer plugin that integrates Kafka with
+OPA, see the build and install instructions in the
+<a href="https://github.com/open-policy-agent/contrib" target="_blank">github.com/open-policy-agent/contrib</a>
+repository.</p>
 
                                 
                                 </section>
@@ -2173,12 +2227,12 @@ our hypothetical repository:</p>
 
             
                 
-                <a href="rest-api.html#watches" class="navigation navigation-prev " aria-label="Previous page: Watches">
+                <a href="ssh-and-sudo-authorization.html" class="navigation navigation-prev " aria-label="Previous page: SSH and sudo Authorization">
                     <i class="fa fa-angle-left"></i>
                 </a>
                 
                 
-                <a href="deployments.html#docker" class="navigation navigation-next " aria-label="Next page: Docker">
+                <a href="kubernetes-admission-control.html" class="navigation navigation-next " aria-label="Next page: Kubernetes Admission Control">
                     <i class="fa fa-angle-right"></i>
                 </a>
                 
@@ -2189,7 +2243,7 @@ our hypothetical repository:</p>
     <script>
         var gitbook = gitbook || [];
         gitbook.push(function() {
-            gitbook.page.hasChanged({"page":{"title":"Deployments","level":"1.6","depth":1,"next":{"title":"Docker","level":"1.6.1","depth":2,"anchor":"#docker","path":"deployments.md","ref":"deployments.md#docker","articles":[{"title":"Running with Docker","level":"1.6.1.1","depth":3,"anchor":"#running-with-docker","path":"deployments.md","ref":"deployments.md#running-with-docker","articles":[]}]},"previous":{"title":"Watches","level":"1.5.8","depth":2,"anchor":"#watches","path":"rest-api.md","ref":"rest-api.md#watches","articles":[]},"dir":"ltr"},"config":{"gitbook":"*","theme":"default","variables":{},"plugins":["header","addcssjs","collapsible-menu","custom-favicon","ga","-fontsettings"],"pluginsConfig":{"collapsible-menu":{},"search":{},"layout":{"headerPath":"layouts/header.html"},"addcssjs":{"css":[],"js":[]},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"header":{},"highlight":{},"favicon":"images/favicon.png","custom-favicon":{},"ga":{"configuration":"auto","token":"UA-84550302-1"},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"}},"file":{"path":"deployments.md","mtime":"2018-04-30T20:07:14.311Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2018-04-30T20:08:39.388Z"},"basePath":".","book":{"language":""}});
+            gitbook.page.hasChanged({"page":{"title":"Kafka Authorization","level":"2.5","depth":1,"next":{"title":"Kubernetes Admission Control","level":"2.6","depth":1,"path":"kubernetes-admission-control.md","ref":"kubernetes-admission-control.md","articles":[]},"previous":{"title":"SSH and sudo Authorization","level":"2.4","depth":1,"path":"ssh-and-sudo-authorization.md","ref":"ssh-and-sudo-authorization.md","articles":[]},"dir":"ltr"},"config":{"gitbook":"*","theme":"default","variables":{},"plugins":["header","addcssjs","collapsible-menu","custom-favicon","ga","-fontsettings"],"pluginsConfig":{"collapsible-menu":{},"search":{},"layout":{"headerPath":"layouts/header.html"},"addcssjs":{"css":[],"js":[]},"lunr":{"maxIndexSize":1000000,"ignoreSpecialCharacters":false},"header":{},"highlight":{},"favicon":"images/favicon.png","custom-favicon":{},"ga":{"configuration":"auto","token":"UA-84550302-1"},"sharing":{"facebook":true,"twitter":true,"google":false,"weibo":false,"instapaper":false,"vk":false,"all":["facebook","google","twitter","weibo","instapaper"]},"theme-default":{"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"},"showLevel":false}},"structure":{"langs":"LANGS.md","readme":"README.md","glossary":"GLOSSARY.md","summary":"SUMMARY.md"},"pdf":{"pageNumbers":true,"fontSize":12,"fontFamily":"Arial","paperSize":"a4","chapterMark":"pagebreak","pageBreaksBefore":"/","margin":{"right":62,"left":62,"top":56,"bottom":56}},"styles":{"website":"styles/website.css","pdf":"styles/pdf.css","epub":"styles/epub.css","mobi":"styles/mobi.css","ebook":"styles/ebook.css","print":"styles/print.css"}},"file":{"path":"kafka-authorization.md","mtime":"2018-04-30T20:07:14.321Z","type":"markdown"},"gitbook":{"version":"3.2.3","time":"2018-04-30T20:08:39.388Z"},"basePath":".","book":{"language":""}});
         });
     </script>
 </div>
