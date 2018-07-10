@@ -29,10 +29,13 @@ import (
 	"github.com/open-policy-agent/opa/server"
 	"github.com/open-policy-agent/opa/storage"
 	"github.com/open-policy-agent/opa/storage/inmem"
+	"github.com/open-policy-agent/opa/topdown"
 	"github.com/open-policy-agent/opa/util"
 	"github.com/open-policy-agent/opa/version"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"path/filepath"
+	"plugin"
 )
 
 var (
@@ -93,6 +96,10 @@ type Params struct {
 	// startup. Data files may be prefixed with "<dotted-path>:" to indicate
 	// where the contained document should be loaded.
 	Paths []string
+
+	// PluginDir is a path to a directory containing shared object files that
+	// OPA can load dynamically to create custom plugins and builtins.
+	PluginDir string
 
 	// Optional filter that will be passed to the file loader.
 	Filter loader.Filter
@@ -166,6 +173,11 @@ func NewRuntime(ctx context.Context, params Params) (*Runtime, error) {
 	store := inmem.New()
 
 	txn, err := store.NewTransaction(ctx, storage.WriteParams)
+	if err != nil {
+		return nil, err
+	}
+
+	err = RegisterPluginsFromDir(params.PluginDir)
 	if err != nil {
 		return nil, err
 	}
@@ -372,6 +384,66 @@ func (rt *Runtime) getBanner() string {
 	fmt.Fprintf(&buf, "\n")
 	fmt.Fprintf(&buf, "Run 'help' to see a list of commands.\n")
 	return buf.String()
+}
+
+// RegisterPluginsFromDir recursively loads all custom builtins + plugins into OPA.
+// It ignores all files that are not recognized by OPA as custom builtins or plugins.
+func RegisterPluginsFromDir(pluginDir string) error {
+	return filepath.Walk(pluginDir, registerSharedObjectFromFile)
+}
+
+func registerSharedObjectFromFile(path string, f os.FileInfo, err error) error {
+	if ok, _ := filepath.Match("*.builtin.so", path); ok {
+		return registerBuiltinFromFile(path)
+	} else if ok, _ := filepath.Match("*.plugin.so", path); ok {
+		return registerPluginFromFile(path)
+	}
+	// for now this function ignores all other files -- is this what we want to do?
+	return nil
+}
+
+func registerBuiltinFromFile(path string) error {
+	mod, err := plugin.Open(path)
+	if err != nil {
+		return err
+	}
+	builtinSym, err := mod.Lookup("Builtin")
+	if err != nil {
+		return err
+	}
+	functionSym, err := mod.Lookup("Function")
+	if err != nil {
+		return err
+	}
+
+	// type assert builtin symbol
+	builtin, ok := builtinSym.(*ast.Builtin)
+	if !ok {
+		return fmt.Errorf("symbol Builtin must be of type ast.Builtin")
+	}
+
+	// type assert function symbol
+	switch fnc := functionSym.(type) {
+	case *topdown.BuiltinFunc:
+		ast.RegisterBuiltin(builtin)
+		topdown.RegisterBuiltinFunc(builtin.Name, *fnc)
+	case *topdown.FunctionalBuiltin1:
+		ast.RegisterBuiltin(builtin)
+		topdown.RegisterFunctionalBuiltin1(builtin.Name, *fnc)
+	case *topdown.FunctionalBuiltin2:
+		ast.RegisterBuiltin(builtin)
+		topdown.RegisterFunctionalBuiltin2(builtin.Name, *fnc)
+	case *topdown.FunctionalBuiltin3:
+		ast.RegisterBuiltin(builtin)
+		topdown.RegisterFunctionalBuiltin3(builtin.Name, *fnc)
+	default:
+		return fmt.Errorf("symbol Function was of an unrecognized type")
+	}
+	return nil
+}
+
+func registerPluginFromFile(path string) error {
+	panic("coming soon")
 }
 
 func compileAndStoreInputs(ctx context.Context, store storage.Store, txn storage.Transaction, modules map[string]*loader.RegoFile, errorLimit int) error {
