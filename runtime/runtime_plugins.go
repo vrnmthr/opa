@@ -26,6 +26,11 @@ import (
 	"github.com/open-policy-agent/opa/topdown"
 )
 
+// PluginDir is the path to a directory containing shared object files that
+// OPA can load dynamically to create custom plugins and builtins. This additional
+//
+var PluginDir string
+
 // NewRuntime returns a new Runtime object initialized with params.
 func NewRuntime(ctx context.Context, params Params) (*Runtime, error) {
 
@@ -96,7 +101,7 @@ func NewRuntime(ctx context.Context, params Params) (*Runtime, error) {
 	return rt, nil
 }
 
-// RegisterPluginsFromDir recursively loads all custom builtins into OPA from dir. This function is idempotent.
+// RegisterBuiltinsFromDir recursively loads all custom builtins into OPA from dir. This function is idempotent.
 func RegisterBuiltinsFromDir(dir string) error {
 	return filepath.Walk(dir, registerBuiltinFromFile)
 }
