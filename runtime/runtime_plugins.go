@@ -50,8 +50,8 @@ func NewRuntime(ctx context.Context, params Params) (*Runtime, error) {
 	}
 
 	// only register custom plugins if directory specified
-	if params.PluginDir != "" {
-		err = RegisterPluginsFromDir(params.PluginDir)
+	if params.BuiltinDir != "" {
+		err = RegisterBuiltinsFromDir(params.BuiltinDir)
 		if err != nil {
 			return nil, err
 		}
@@ -96,28 +96,27 @@ func NewRuntime(ctx context.Context, params Params) (*Runtime, error) {
 	return rt, nil
 }
 
-// RegisterPluginsFromDir recursively loads all custom builtins + plugins into OPA.
-// It ignores all files that are not recognized by OPA as custom builtins or plugins.
-func RegisterPluginsFromDir(pluginDir string) error {
-	return filepath.Walk(pluginDir, registerSharedObjectFromFile)
+// RegisterPluginsFromDir recursively loads all custom builtins into OPA from dir. This function is idempotent.
+func RegisterBuiltinsFromDir(dir string) error {
+	return filepath.Walk(dir, registerBuiltinFromFile)
 }
 
-func registerSharedObjectFromFile(path string, f os.FileInfo, err error) error {
+func registerBuiltinFromFile(path string, f os.FileInfo, err error) error {
+	// skip anything that is a directory
+	if f.IsDir() {
+		return nil
+	}
 	// if error occurs during traversal to path, exit and crash
-	// we could alternatively return filepath.SkipDir, which would skip the directory without crashing
 	if err != nil {
 		return err
 	}
-	if ok, _ := filepath.Match("*.builtin.so", path); ok {
-		return registerBuiltinFromFile(path)
-	} else if ok, _ := filepath.Match("*.plugin.so", path); ok {
-		return registerPluginFromFile(path)
-	}
-	// for now this function ignores all other files -- is this what we want to do?
-	return nil
-}
 
-func registerBuiltinFromFile(path string) error {
+	// TODO: for now, this function skips anything in the directory that does not have the expected file name -- is this what we want?
+	if ok, _ := filepath.Match("*.builtin.so", path); !ok {
+		return nil
+	}
+
+	// proceed to load the plugin
 	mod, err := plugin.Open(path)
 	if err != nil {
 		return err
@@ -155,8 +154,4 @@ func registerBuiltinFromFile(path string) error {
 		return fmt.Errorf("symbol Function was of an unrecognized type")
 	}
 	return nil
-}
-
-func registerPluginFromFile(path string) error {
-	panic("coming soon")
 }

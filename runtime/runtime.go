@@ -93,9 +93,9 @@ type Params struct {
 	// where the contained document should be loaded.
 	Paths []string
 
-	// PluginDir is the path to a directory containing shared object files that
-	// OPA can load dynamically to create custom plugins and builtins.
-	PluginDir string
+	// BuiltinDir is the path to a directory containing .builtin.so shared object files that
+	// OPA can load dynamically to create custom builtins.
+	BuiltinDir string
 
 	// Optional filter that will be passed to the file loader.
 	Filter loader.Filter
