@@ -4,6 +4,8 @@
 
 package runtime
 
+// Contains parts of the runtime package common to all platforms
+
 import (
 	"bytes"
 	"context"
@@ -11,13 +13,13 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/sirupsen/logrus"
+	"gopkg.in/fsnotify.v1"
 	"io"
 	"io/ioutil"
 	"os"
 	"sync"
 	"time"
-
-	fsnotify "gopkg.in/fsnotify.v1"
 
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/loader"
@@ -28,14 +30,8 @@ import (
 	"github.com/open-policy-agent/opa/repl"
 	"github.com/open-policy-agent/opa/server"
 	"github.com/open-policy-agent/opa/storage"
-	"github.com/open-policy-agent/opa/storage/inmem"
-	"github.com/open-policy-agent/opa/topdown"
 	"github.com/open-policy-agent/opa/util"
 	"github.com/open-policy-agent/opa/version"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"path/filepath"
-	"plugin"
 )
 
 var (
@@ -97,7 +93,7 @@ type Params struct {
 	// where the contained document should be loaded.
 	Paths []string
 
-	// PluginDir is a path to a directory containing shared object files that
+	// PluginDir is the path to a directory containing shared object files that
 	// OPA can load dynamically to create custom plugins and builtins.
 	PluginDir string
 
@@ -152,73 +148,6 @@ type Runtime struct {
 	Manager *plugins.Manager
 
 	decisionLogger func(context.Context, *server.Info)
-}
-
-// NewRuntime returns a new Runtime object initialized with params.
-func NewRuntime(ctx context.Context, params Params) (*Runtime, error) {
-
-	if params.ID == "" {
-		var err error
-		params.ID, err = generateInstanceID()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	loaded, err := loader.Filtered(params.Paths, params.Filter)
-	if err != nil {
-		return nil, err
-	}
-
-	store := inmem.New()
-
-	txn, err := store.NewTransaction(ctx, storage.WriteParams)
-	if err != nil {
-		return nil, err
-	}
-
-	err = RegisterPluginsFromDir(params.PluginDir)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := store.Write(ctx, txn, storage.AddOp, storage.Path{}, loaded.Documents); err != nil {
-		store.Abort(ctx, txn)
-		return nil, errors.Wrapf(err, "storage error")
-	}
-
-	if err := compileAndStoreInputs(ctx, store, txn, loaded.Modules, params.ErrorLimit); err != nil {
-		store.Abort(ctx, txn)
-		return nil, errors.Wrapf(err, "compile error")
-	}
-
-	if err := store.Commit(ctx, txn); err != nil {
-		return nil, errors.Wrapf(err, "storage error")
-	}
-
-	m, plugins, err := initPlugins(params.ID, store, params.ConfigFile)
-	if err != nil {
-		return nil, err
-	}
-
-	var decisionLogger func(context.Context, *server.Info)
-
-	if p, ok := plugins["decision_logs"]; ok {
-		decisionLogger = p.(*logs.Plugin).Log
-
-		if params.DecisionIDFactory == nil {
-			params.DecisionIDFactory = generateDecisionID
-		}
-	}
-
-	rt := &Runtime{
-		Store:          store,
-		Manager:        m,
-		Params:         params,
-		decisionLogger: decisionLogger,
-	}
-
-	return rt, nil
 }
 
 // StartServer starts the runtime in server mode. This function will block the calling goroutine.
@@ -384,66 +313,6 @@ func (rt *Runtime) getBanner() string {
 	fmt.Fprintf(&buf, "\n")
 	fmt.Fprintf(&buf, "Run 'help' to see a list of commands.\n")
 	return buf.String()
-}
-
-// RegisterPluginsFromDir recursively loads all custom builtins + plugins into OPA.
-// It ignores all files that are not recognized by OPA as custom builtins or plugins.
-func RegisterPluginsFromDir(pluginDir string) error {
-	return filepath.Walk(pluginDir, registerSharedObjectFromFile)
-}
-
-func registerSharedObjectFromFile(path string, f os.FileInfo, err error) error {
-	if ok, _ := filepath.Match("*.builtin.so", path); ok {
-		return registerBuiltinFromFile(path)
-	} else if ok, _ := filepath.Match("*.plugin.so", path); ok {
-		return registerPluginFromFile(path)
-	}
-	// for now this function ignores all other files -- is this what we want to do?
-	return nil
-}
-
-func registerBuiltinFromFile(path string) error {
-	mod, err := plugin.Open(path)
-	if err != nil {
-		return err
-	}
-	builtinSym, err := mod.Lookup("Builtin")
-	if err != nil {
-		return err
-	}
-	functionSym, err := mod.Lookup("Function")
-	if err != nil {
-		return err
-	}
-
-	// type assert builtin symbol
-	builtin, ok := builtinSym.(*ast.Builtin)
-	if !ok {
-		return fmt.Errorf("symbol Builtin must be of type ast.Builtin")
-	}
-
-	// type assert function symbol
-	switch fnc := functionSym.(type) {
-	case *topdown.BuiltinFunc:
-		ast.RegisterBuiltin(builtin)
-		topdown.RegisterBuiltinFunc(builtin.Name, *fnc)
-	case *topdown.FunctionalBuiltin1:
-		ast.RegisterBuiltin(builtin)
-		topdown.RegisterFunctionalBuiltin1(builtin.Name, *fnc)
-	case *topdown.FunctionalBuiltin2:
-		ast.RegisterBuiltin(builtin)
-		topdown.RegisterFunctionalBuiltin2(builtin.Name, *fnc)
-	case *topdown.FunctionalBuiltin3:
-		ast.RegisterBuiltin(builtin)
-		topdown.RegisterFunctionalBuiltin3(builtin.Name, *fnc)
-	default:
-		return fmt.Errorf("symbol Function was of an unrecognized type")
-	}
-	return nil
-}
-
-func registerPluginFromFile(path string) error {
-	panic("coming soon")
 }
 
 func compileAndStoreInputs(ctx context.Context, store storage.Store, txn storage.Transaction, modules map[string]*loader.RegoFile, errorLimit int) error {
