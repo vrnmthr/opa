@@ -7,19 +7,19 @@
 package runtime
 
 import (
+	"fmt"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/types"
 	"github.com/open-policy-agent/opa/util/test"
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 )
 
-const (
-	testBuiltin = `
+func makeBuiltinWithName(name string) string {
+	return fmt.Sprintf(`
 package main
 
 import (
@@ -29,7 +29,7 @@ import (
 )
 
 var Builtin = ast.Builtin{
-	Name: "equals",
+	Name: "%v",
 	Decl: types.NewFunction(
 		types.Args(types.N, types.N),
 		types.B,
@@ -39,169 +39,85 @@ var Builtin = ast.Builtin{
 var Function topdown.FunctionalBuiltin2 = func(a, b ast.Value) (ast.Value, error) {
 	return ast.Boolean(true), nil
 }
-`
-)
+`, name)
+}
 
 func TestRegisterBuiltinSingle(t *testing.T) {
 
+	name := "builtinsingle"
 	files := map[string]string{
-		"/dir/equals.go": testBuiltin,
+		"/dir/equals.go": makeBuiltinWithName(name),
 	}
 
 	root, cleanup := makeDirWithBuiltin(files)
 	defer cleanup()
 
-	loaded, err := All([]string{sharedObjectFile})
+	builtinDir := filepath.Join(root, "/dir")
+	err := RegisterBuiltinsFromDir(builtinDir)
 	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+		t.Fatalf(err.Error())
 	}
 
-	expectedBuiltin := ast.Builtin{
-		Name: "equals",
+	expected := &ast.Builtin{
+		Name: name,
 		Decl: types.NewFunction(
 			types.Args(types.N, types.N),
 			types.B,
 		),
 	}
 
-	actual := loaded.BuiltinFuncs[sharedObjectFile]
-	if !reflect.DeepEqual(*actual.Builtin, expectedBuiltin) {
-		t.Fatalf("Expected builtin %v but got: %v", expectedBuiltin, *actual.Builtin)
+	// check that builtin function was loaded correctly
+	actual := ast.BuiltinMap[name]
+	if !reflect.DeepEqual(*expected, *actual) {
+		t.Fatalf("Expected builtin %v but got: %v", *expected, *actual)
 	}
 }
 
-func TestLoadDirRecursivePlugin(t *testing.T) {
-
+func TestRegisterBuiltinRecursive(t *testing.T) {
+	names := []string{"shallow", "parallel", "deep", "deeper"}
+	ignored := []string{"ignore", "ignore2"}
 	files := map[string]string{
-		"/a/data1.json":  `{"a": [1,2,3]}`,
-		"/a/e.rego":      `package q`,
-		"/b/data2.yaml":  `{"aaa": {"bbb": 1}}`,
-		"/b/equals.go":   testBuiltin,
-		"/b/data3.yaml":  `{"aaa": {"ccc": 2}}`,
-		"/b/d/x.json":    "null",
-		"/b/d/e.rego":    `package p`,
-		"/b/d/ignore":    `deadbeef`,
-		"/b/d/equals.go": testBuiltin,
-		"/foo":           `{"zzz": "b"}`,
+		"/dir/shallow.go":            makeBuiltinWithName("shallow"),
+		"/dir/parallel.go":           makeBuiltinWithName("parallel"),
+		"/dir/deep/deep.go":          makeBuiltinWithName("deep"),
+		"/dir/deep/deeper/deeper.go": makeBuiltinWithName("deeper"),
+		"/other/ignore.go":           makeBuiltinWithName("ignore"),
+		"/ignore2.go":                makeBuiltinWithName("ignore2"),
 	}
 
-	rootDir, cleanup := makeDirWithBuiltin(files)
+	root, cleanup := makeDirWithBuiltin(files)
 	defer cleanup()
 
-	loaded, err := All(mustListPaths(rootDir, false)[1:])
+	builtinDir := filepath.Join(root, "/dir")
+	err := RegisterBuiltinsFromDir(builtinDir)
 	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	expectedDocuments := parseJSON(`
-		{
-			"zzz": "b",
-			"a": [1,2,3],
-			"aaa": {
-				"bbb": 1,
-				"ccc": 2
-			},
-			"d": null
-		}
-		`)
-	if !reflect.DeepEqual(loaded.Documents, expectedDocuments) {
-		t.Fatalf("Expected:\n%v\n\nGot:\n%v", expectedDocuments, loaded.Documents)
-	}
-	mod1 := ast.MustParseModule(files["/a/e.rego"])
-	mod2 := ast.MustParseModule(files["/b/d/e.rego"])
-	expectedMod1 := loaded.Modules[CleanPath(filepath.Join(rootDir, "/a/e.rego"))].Parsed
-	expectedMod2 := loaded.Modules[CleanPath(filepath.Join(rootDir, "/b/d/e.rego"))].Parsed
-	if !mod1.Equal(expectedMod1) {
-		t.Fatalf("Expected:\n%v\n\nGot:\n%v", expectedMod1, mod1)
-	}
-	if !mod2.Equal(expectedMod2) {
-		t.Fatalf("Expected:\n%v\n\nGot:\n%v", expectedMod2, mod2)
+		t.Fatalf(err.Error())
 	}
 
-	so1 := CleanPath(filepath.Join(rootDir, "/b/d/equals.builtin.so"))
-	so2 := CleanPath(filepath.Join(rootDir, "/b/equals.builtin.so"))
-	expectedBuiltin := ast.Builtin{
-		Name: "equals",
-		Decl: types.NewFunction(
-			types.Args(types.N, types.N),
-			types.B,
-		),
-	}
-	actual1 := loaded.BuiltinFuncs[so1]
-	if !reflect.DeepEqual(*actual1.Builtin, expectedBuiltin) {
-		t.Fatalf("Expected builtin %v but got: %v", expectedBuiltin, *actual1.Builtin)
-	}
-	actual2 := loaded.BuiltinFuncs[so2]
-	if !reflect.DeepEqual(*actual2.Builtin, expectedBuiltin) {
-		t.Fatalf("Expected builtin %v but got: %v", expectedBuiltin, *actual2.Builtin)
-	}
-}
-
-func TestLoadErrorsPlugin(t *testing.T) {
-
-	noFunction := `
-package main
-
-import (
-	"github.com/open-policy-agent/opa/ast"
-	"github.com/open-policy-agent/opa/types"
-)
-
-var Builtin = ast.Builtin{
-	Name: "equals",
-	Decl: types.NewFunction(
+	expectedDecl := types.NewFunction(
 		types.Args(types.N, types.N),
 		types.B,
-	),
-}`
-	noBuiltin := `
-package main
+	)
 
-import (
-	"github.com/open-policy-agent/opa/ast"
-	"github.com/open-policy-agent/opa/topdown"
-)
-
-var Function topdown.FunctionalBuiltin2 = func(a, b ast.Value) (ast.Value, error) {
-	return ast.Boolean(true), nil
-}
-`
-
-	files := map[string]string{
-		"/x1.json":    `{"x": [1,2,3]}`,
-		"/x2.json":    `{"x": {"y": 1}}`,
-		"/empty.rego": `   `,
-		"/dir/a.json": ``,
-		"/dir/b.yaml": `
-		foo:
-		  - bar:
-		`,
-		"/bad_doc.json":   "[1,2,3]",
-		"/no_function.go": noFunction,
-		"/no_builtin.go":  noBuiltin,
+	// check that every builtin is present
+	for _, name := range names {
+		actual, ok := ast.BuiltinMap[name]
+		if !ok {
+			t.Fatalf("builtin %v not present", name)
+		}
+		if actual.Name != name {
+			t.Fatalf("builtin %v has incorrect name %v", name, actual.Name)
+		}
+		if !reflect.DeepEqual(actual.Decl, expectedDecl) {
+			t.Fatalf("Expected builtin %v but got: %v", *expectedDecl, *actual.Decl)
+		}
 	}
 
-	rootDir, cleanup := makeDirWithBuiltin(files)
-	defer cleanup()
-	paths := mustListPaths(rootDir, false)[1:]
-	sort.Strings(paths)
-	_, err := All(paths)
-	if err == nil {
-		t.Fatalf("Expected failure")
-	}
-
-	expected := []string{
-		"bad_doc.json: bad document type",
-		"a.json: EOF",
-		"b.yaml: error converting YAML to JSON",
-		"empty.rego: empty policy",
-		"x2.json: merge error",
-		"no_builtin.builtin.so: plugin: symbol Builtin not found",
-		"no_function.builtin.so: plugin: symbol Function not found",
-	}
-
-	for _, s := range expected {
-		if !strings.Contains(err.Error(), s) {
-			t.Fatalf("Expected error to contain %v but got:\n%v", s, err)
+	// check that ignore is absent
+	for _, ignore := range ignored {
+		_, ok := ast.BuiltinMap[ignore]
+		if ok {
+			t.Fatalf("builtin %v incorrectly added", ignore)
 		}
 	}
 }
